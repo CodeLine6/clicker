@@ -1,15 +1,16 @@
+// clicker.js - Updated with full data capture
 const fs = require("fs");
-//Enable stealth mode
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+const { v4: uuidv4 } = require('uuid'); // Add to package.json
 const { humanMouseMovement, randomDelay, randomBetween, simulateReading, randomPageInteractions } = require("./lib/utils");
 const Click = require("./models/clicks");
 const connectToMongo = require("./db");
+
 puppeteer.use(StealthPlugin());
 connectToMongo();
 
 const SEARCH_ENGINE = "bing";
-
 const SEARCH_ENGINE_CONFIG = {
   google: {
     url: "https://www.google.com/",
@@ -27,33 +28,27 @@ const SEARCH_ENGINE_CONFIG = {
   },
 };
 
-const TARGET = "https://www.namecheap.com";
+const TARGET = "https://cloud.google.com";
 const KEYWORD = "cheap hosting";
-
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const click = async () => {
+async function click(sessionId)  {
   let click_count = 0;
 
-    const browser = await puppeteer.launch({
-      headless: false,
-      ignoreHTTPSErrors: true, // ignore SSL errors
-    });
+  const browser = await puppeteer.launch({
+    headless: false,
+    ignoreHTTPSErrors: true,
+  });
 
   const page = await browser.newPage();
+  const userAgent = await page.evaluate(() => navigator.userAgent);
+  
   await page.goto(SEARCH_ENGINE_CONFIG[SEARCH_ENGINE]["url"]);
-  await page.waitForSelector(
-    SEARCH_ENGINE_CONFIG[SEARCH_ENGINE]["search_input_selector"]
-  );
-
+  await page.waitForSelector(SEARCH_ENGINE_CONFIG[SEARCH_ENGINE]["search_input_selector"]);
   await delay(2000);
 
-  await page.type(
-    SEARCH_ENGINE_CONFIG[SEARCH_ENGINE]["search_input_selector"],
-    KEYWORD
-  );
-
+  await page.type(SEARCH_ENGINE_CONFIG[SEARCH_ENGINE]["search_input_selector"], KEYWORD);
   await page.screenshot({ path: "search_input.png" });
   await page.keyboard.press("Enter");
   await page.waitForNavigation({ waitUntil: "networkidle0" });
@@ -61,110 +56,129 @@ const click = async () => {
 
   fs.writeFileSync("search_results.html", await page.content());
 
-  await page.waitForSelector(
-    SEARCH_ENGINE_CONFIG[SEARCH_ENGINE]["search_result_selector"]
-  );
+  await page.waitForSelector(SEARCH_ENGINE_CONFIG[SEARCH_ENGINE]["search_result_selector"]);
 
-  const sponsored_results = await page.$$(
-    SEARCH_ENGINE_CONFIG[SEARCH_ENGINE]["sponsored_result_selector"]
-  );
-
-  await page.click
+  const sponsored_results = await page.$$(SEARCH_ENGINE_CONFIG[SEARCH_ENGINE]["sponsored_result_selector"]);
 
   for (let i = 0; i < sponsored_results.length; i++) {
     const sponsored_result = sponsored_results[i];
-    
+    const position = i + 1; // Track ad position
+    let timeOnPage = 0;
+    let interactionCount = 0;
+    let success;
+    let errorMessage = null;
+    let linkUrl = null;
+
     try {
-        // Check if content of the sponsored result contains the target domain
-        const content = await sponsored_result.evaluate(
-            (element) => {
-                return element.textContent || element.innerText || '';
-            }
-        );
-        
-        if (TARGET && !content.includes(TARGET)) {
-            continue;
-        }
-        
-        // Add human-like delay before interaction
-        await randomDelay(500, 1500);
-        // Realistic mouse movement to the sponsored result
-        const box = await sponsored_result.boundingBox();
-        if (box) {
-            await humanMouseMovement(page, box.x + box.width / 2, box.y + box.height / 2);
-            await randomDelay(200, 800);
-        }
-        
-        // Find the link
-        const link = await sponsored_result.$(
-            SEARCH_ENGINE_CONFIG[SEARCH_ENGINE]["link_selector"]
-        );  
-        
-        // Move mouse to the actual link with realistic movement
-        const linkBox = await link.boundingBox();
-        if (linkBox) {
-            await humanMouseMovement(page, 
-                linkBox.x + randomBetween(5, linkBox.width - 5), 
-                linkBox.y + randomBetween(5, linkBox.height - 5)
-            );
-            await randomDelay(300, 800);
-        }
+      // Check if content contains target domain
+      const content = await sponsored_result.evaluate(element => {
+        return element.textContent || element.innerText || '';
+      });
 
-        const linkUrl = await link.evaluate(el => el.getAttribute('href'));
-        
-        // Get current pages count
-        const pagesBefore = await browser.pages(); 
-        // Click the link with realistic timing
-        link.evaluate(el => el.click())
-        // Wait for potential new tab or navigation
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-        
-        // Check if new tab opened
-        const pagesAfter = await browser.pages();
-        let targetPage = page;
-        
-        if (pagesAfter.length > pagesBefore.length) {
-            
-            const newClick = new Click({ 
-              url: linkUrl, 
-              click_count: 1, 
-              timestamp: new Date(), 
-              keyword: KEYWORD, 
-              target: TARGET ? TARGET : 'All',
-              search_engine: SEARCH_ENGINE
-            });
-            await newClick.save();
-            // New tab opened
-            targetPage = pagesAfter[pagesAfter.length - 1];
-            // Wait for new page to load
-            await targetPage.waitForSelector('body', { timeout: 30000 });
-            await randomDelay(1000, 2000);
-
-            // Human-like delay after page load
-            await randomDelay(2000, 4000);
-            // Simulate reading/scanning behavior with mouse movements
-            await simulateReading(targetPage);
-            // Random interactions with realistic mouse movements
-            await randomPageInteractions(targetPage);
-            // Simulate time spent on page
-            await randomDelay(5000, 15000);
-        } 
-        
-        // Handle navigation back
-        if (targetPage !== page) {
-            // Close new tab
-            await targetPage.close();
-        }
-        
-        click_count++;
-        
-        // Add delay between processing different sponsored results
-        await randomDelay(3000, 8000);
-        
-    } catch (error) {
-        console.error(`Error processing sponsored result ${i}:`, error);
+      if (TARGET && !content.includes(TARGET)) {
         continue;
+      }
+
+      await randomDelay(500, 1500);
+      
+      // Realistic mouse movement
+      const box = await sponsored_result.boundingBox();
+      if (box) {
+        await humanMouseMovement(page, box.x + box.width / 2, box.y + box.height / 2);
+        await randomDelay(200, 800);
+      }
+
+      // Find and click the link
+      const link = await sponsored_result.$(SEARCH_ENGINE_CONFIG[SEARCH_ENGINE]["link_selector"]);
+      
+      if (!link) {
+        throw new Error("Link not found in sponsored result");
+      }
+
+      const linkBox = await link.boundingBox();
+      if (linkBox) {
+        await humanMouseMovement(page, 
+          linkBox.x + randomBetween(5, linkBox.width - 5), 
+          linkBox.y + randomBetween(5, linkBox.height - 5)
+        );
+        await randomDelay(300, 800);
+      }
+
+      linkUrl = await link.evaluate(el => el.getAttribute('href'));
+      
+      // Track timing
+      const startTime = Date.now();
+      
+      const pagesBefore = await browser.pages();
+      await link.evaluate(el => el.click());
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      const pagesAfter = await browser.pages();
+      let targetPage = page;
+
+      if (pagesAfter.length > pagesBefore.length) {
+        targetPage = pagesAfter[pagesAfter.length - 1];
+        await targetPage.waitForSelector('body', { timeout: 30000 });
+        await randomDelay(1000, 2000);
+
+        // Simulate human behavior and count interactions
+        await randomDelay(2000, 4000);
+        
+        // Simulate reading
+        await simulateReading(targetPage);
+        interactionCount += 3; // Reading counts as interactions
+        
+        // Random page interactions
+        const interactions = await randomPageInteractions(targetPage);
+        interactionCount += interactions;
+        
+        // Simulate time spent on page
+        const additionalTime = randomBetween(5000, 15000);
+        await randomDelay(additionalTime);
+        
+        timeOnPage = Date.now() - startTime;
+        success = true;
+      }
+
+      else  {
+        success = false;
+      }
+
+      try {
+        const newClick = new Click({
+          url: linkUrl || 'Unknown',
+          timestamp: new Date(),
+          keyword: KEYWORD,
+          target: TARGET || 'All',
+          search_engine: SEARCH_ENGINE,
+          position: position,
+          time_on_page: timeOnPage,
+          interactions: interactionCount,
+          session_id: sessionId,
+          user_agent: userAgent,
+          success: success,
+          error_message: errorMessage
+        });
+        
+        await newClick.save();
+        console.log(`Click saved: ${success ? 'Success' : 'Failed'} - Position: ${position}, Time: ${timeOnPage}ms`);
+      } catch (saveError) {
+        console.error('Error saving click data:', saveError);
+      }
+
+      // Handle navigation back
+      if (targetPage !== page) {
+        await targetPage.close();
+      }
+
+      click_count++;
+      await randomDelay(3000, 8000);
+
+    } catch (error) {
+      console.error(`Error processing sponsored result ${i}:`, error);
+      errorMessage = error.message;
+      success = false;
+      timeOnPage = Date.now() - (Date.now() - 1000); // Minimal time if failed
     }
   }
 
@@ -172,17 +186,29 @@ const click = async () => {
   return click_count;
 };
 
-async function clicker() {
-  const TOTAL_CLICKS = 5;
+export function clicker()  {
+  if (isClickerRunning) {
+    return { success: false, message: 'Clicker is already running' };
+  }
+
   let current_clicks = 0;
-  while (current_clicks < TOTAL_CLICKS) {
+  const sessionId = uuidv4(); // Generate unique session ID
+
+  (async function () {
+      while (!breakLoop) {
     try {
-      const click_count = await click();
-      current_clicks += click_count;
+      current_clicks++;
+      await click(sessionId);
+      console.log(`Completed ${current_clicks} clicks`);
     } catch (error) {
+      console.error('Error in clicker loop:', error);
       break;
     }
   }
-}
+    })()
 
-clicker();
+    console.log(`Clicker stopped. Total clicks: ${current_clicks}`);
+    isClickerRunning = false;
+  
+  return { success: true, message: 'Clicker started', sessionId };
+}
