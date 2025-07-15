@@ -5,12 +5,9 @@ const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const { v4: uuidv4 } = require('uuid'); // Add to package.json
 const { humanMouseMovement, randomDelay, randomBetween, simulateReading, randomPageInteractions } = require("./lib/utils");
 const Click = require("./models/clicks");
-const connectToMongo = require("./db");
 
 puppeteer.use(StealthPlugin());
-connectToMongo();
 
-const SEARCH_ENGINE = "bing";
 const SEARCH_ENGINE_CONFIG = {
   google: {
     url: "https://www.google.com/",
@@ -28,12 +25,9 @@ const SEARCH_ENGINE_CONFIG = {
   },
 };
 
-const TARGET = "https://cloud.google.com";
-const KEYWORD = "cheap hosting";
-
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function click(sessionId)  {
+async function click({sessionId, searchTerm: KEYWORD, searchEngine: SEARCH_ENGINE, target: TARGET})  {
   let click_count = 0;
 
   const browser = await puppeteer.launch({
@@ -186,29 +180,36 @@ async function click(sessionId)  {
   return click_count;
 };
 
-export function clicker()  {
-  if (isClickerRunning) {
-    return { success: false, message: 'Clicker is already running' };
-  }
+function clicker(clickerConfig) {
+
+  let running = true;
+    
+    // Listen for custom events on process
+  process.on('stopLoop', () => {
+        console.log('Custom stop signal received');
+        running = false;
+  });
 
   let current_clicks = 0;
-  const sessionId = uuidv4(); // Generate unique session ID
+  const sessionId = uuidv4();
 
   (async function () {
-      while (!breakLoop) {
-    try {
-      current_clicks++;
-      await click(sessionId);
-      console.log(`Completed ${current_clicks} clicks`);
-    } catch (error) {
-      console.error('Error in clicker loop:', error);
-      break;
+    while (running) {
+      try {
+        current_clicks++;
+        await click({sessionId, ...clickerConfig});
+        console.log(`Completed ${current_clicks} clicks`);
+      } catch (error) {
+        console.error('Error in clicker loop:', error);
+        break;
+      }
     }
-  }
-    })()
 
-    console.log(`Clicker stopped. Total clicks: ${current_clicks}`);
-    isClickerRunning = false;
-  
-  return { success: true, message: 'Clicker started', sessionId };
+    process.emit('loopStopped');
+  })();
+
+  return { success: running, message: 'Clicker started', sessionId };
 }
+
+
+module.exports = { clicker };

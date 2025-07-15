@@ -1,44 +1,44 @@
 const express = require("express");
 const connectToMongo = require("./db");
-const { clicker } = require("./clicker");
+let isClickerRunning = false;
 
 const app = express();
+app.use(express.json());
 const PORT = 3000;
-let breakLoop = false;
-let isClickerRunning = false;
+
+// Import the click function
+const { clicker } = require("./clicker");
 
 app.use(express.static("public"));
 app.use(express.json());
 app.use('/api/analytics', require('./routes/analytics'));
-// Endpoint to start the clicker
 
 app.post('/start-clicker', (req, res) => {
+  if(isClickerRunning) return res.json({ success: false, message: 'Clicker is already running' });
+
+  const {searchTerm, searchEngine, target} = req.query;
+  // check if the cliker is already running
   try {
-    const result = clicker();
+    const result = clicker({searchTerm, searchEngine, target});
+    isClickerRunning = result.success;
     res.json(result);
   } catch (error) {
     res.status(500).json({ success: false, message: 'Failed to start clicker', error: error.message });
   }
 });
 
-// Endpoint to stop the clicker
 app.post('/stop-clicker', (req, res) => {
-  if (!isClickerRunning) {
-    return res.json({ success: false, message: 'No clicker is currently running' });
-  }
-  
-  breakLoop = true;
+  process.emit('stopLoop');
   res.json({ success: true, message: 'Stop signal sent to clicker' });
 });
 
-// Optional: Status endpoint
 app.get('/clicker-status', (req, res) => {
-  res.json({ 
-    isRunning: isClickerRunning,
-    breakLoop: breakLoop 
-  });
+  res.json({isClickerRunning });
 });
 
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
-
 connectToMongo();
+
+process.on('loopStopped', () => {
+  isClickerRunning = false;
+});
