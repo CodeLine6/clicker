@@ -5,21 +5,26 @@ class ClickAnalyticsDashboard {
         this.currentFilters = {};
         this.sessions = [];
         this.init();
+         this.currentPage = 1; // Add this
+        this.itemsPerPage = 25; // Add this
+        this.totalPages = 1; // Add this
     }
 
     init() {
-        this.bindEvents();
-        this.loadSessions();
+    this.bindEvents();
+    this.loadSessions();
+    this.loadAnalytics();
+    this.loadRecentActivity();
+    this.checkClickerStatus(); // Add this line
+    
+    // Auto-refresh every 30 seconds
+    setInterval(() => {
         this.loadAnalytics();
         this.loadRecentActivity();
-        
-        // Auto-refresh every 30 seconds
-        setInterval(() => {
-            this.loadAnalytics();
-            this.loadRecentActivity();
-            this.loadSessions(); // Refresh sessions periodically
-        }, 30000);
-    }
+        this.loadSessions();
+        this.checkClickerStatus(); // Add this line
+    }, 30000);
+}
 
     bindEvents() {
         document.getElementById('applyFilters').addEventListener('click', () => {
@@ -38,6 +43,46 @@ class ClickAnalyticsDashboard {
                 this.loadRecentActivity();
             }
         });
+
+        document.getElementById('startClickerBtn').addEventListener('click', () => {
+            this.startClicker();
+        });
+
+        document.getElementById('stopClickerBtn').addEventListener('click', () => {
+            this.stopClicker();
+        });
+
+        // Add pagination event bindings
+        document.getElementById('itemsPerPage').addEventListener('change', (e) => {
+            this.itemsPerPage = parseInt(e.target.value);
+            this.currentPage = 1; // Reset to first page
+            this.loadRecentActivity();
+        });
+
+        document.getElementById('firstPageBtn').addEventListener('click', () => {
+            this.currentPage = 1;
+            this.loadRecentActivity();
+        });
+
+        document.getElementById('prevPageBtn').addEventListener('click', () => {
+            if (this.currentPage > 1) {
+                this.currentPage--;
+                this.loadRecentActivity();
+            }
+        });
+
+        document.getElementById('nextPageBtn').addEventListener('click', () => {
+            if (this.currentPage < this.totalPages) {
+                this.currentPage++;
+                this.loadRecentActivity();
+            }
+        });
+
+        document.getElementById('lastPageBtn').addEventListener('click', () => {
+            this.currentPage = this.totalPages;
+            this.loadRecentActivity();
+        });
+
     }
 
     async loadSessions() {
@@ -69,7 +114,7 @@ class ClickAnalyticsDashboard {
     }
 
     applyFilters() {
-        this.currentFilters = {
+          this.currentFilters = {
             startDate: document.getElementById('startDate').value,
             endDate: document.getElementById('endDate').value,
             keyword: document.getElementById('keyword').value,
@@ -77,6 +122,7 @@ class ClickAnalyticsDashboard {
             sessionId: document.getElementById('sessionFilter').value
         };
 
+        this.currentPage = 1; // Reset to first page when filters change
         this.loadAnalytics();
         this.loadRecentActivity();
     }
@@ -88,6 +134,7 @@ class ClickAnalyticsDashboard {
         document.getElementById('searchEngine').value = '';
         document.getElementById('sessionFilter').value = '';
         this.currentFilters = {};
+        this.currentPage = 1; // Reset to first page
         this.loadAnalytics();
         this.loadRecentActivity();
     }
@@ -108,14 +155,27 @@ class ClickAnalyticsDashboard {
 
     async loadRecentActivity() {
         try {
+            // Show loading state
+            document.getElementById('activityLoading').classList.remove('hidden');
+            document.getElementById('recentActivityTable').style.opacity = '0.5';
+
             const params = new URLSearchParams({
-                sessionId: this.currentFilters.sessionId || ''
+                sessionId: this.currentFilters.sessionId || '',
+                page: this.currentPage,
+                limit: this.itemsPerPage
             });
+
             const response = await fetch(`/api/analytics/recent-activity?${params}`);
-            const data = await response.json();
-            this.updateRecentActivityTable(data);
+            const result = await response.json();
+
+            this.updateRecentActivityTable(result.data);
+            this.updatePagination(result.pagination);
         } catch (error) {
             console.error('Error loading recent activity:', error);
+        } finally {
+            // Hide loading state
+            document.getElementById('activityLoading').classList.add('hidden');
+            document.getElementById('recentActivityTable').style.opacity = '1';
         }
     }
 
@@ -272,8 +332,9 @@ class ClickAnalyticsDashboard {
     }
 
      filterBySession(sessionId) {
-        document.getElementById('sessionFilter').value = sessionId;
+         document.getElementById('sessionFilter').value = sessionId;
         this.currentFilters.sessionId = sessionId;
+        this.currentPage = 1; // Reset to first page
         this.loadAnalytics();
         this.loadRecentActivity();
     }
@@ -287,6 +348,18 @@ class ClickAnalyticsDashboard {
     updateRecentActivityTable(data) {
         const tbody = document.getElementById('recentActivityTable');
         tbody.innerHTML = '';
+
+        if (data.length === 0) {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td colspan="9" class="px-4 py-8 text-center text-gray-500">
+                    <i class="fas fa-inbox text-2xl mb-2"></i>
+                    <p>No recent activity found</p>
+                </td>
+            `;
+            tbody.appendChild(row);
+            return;
+        }
 
         data.forEach(click => {
             const row = document.createElement('tr');
@@ -315,6 +388,89 @@ class ClickAnalyticsDashboard {
             tbody.appendChild(row);
         });
     }
+
+    updatePagination(pagination) {
+        this.totalPages = pagination.totalPages;
+        
+        // Update pagination info
+        const startItem = ((pagination.currentPage - 1) * pagination.itemsPerPage) + 1;
+        const endItem = Math.min(pagination.currentPage * pagination.itemsPerPage, pagination.totalCount);
+        
+        document.getElementById('paginationInfo').textContent = 
+            `Showing ${startItem} to ${endItem} of ${pagination.totalCount} results`;
+
+        // Update button states
+        document.getElementById('firstPageBtn').disabled = !pagination.hasPreviousPage;
+        document.getElementById('prevPageBtn').disabled = !pagination.hasPreviousPage;
+        document.getElementById('nextPageBtn').disabled = !pagination.hasNextPage;
+        document.getElementById('lastPageBtn').disabled = !pagination.hasNextPage;
+
+        // Update page numbers
+        this.updatePageNumbers(pagination);
+    }
+
+    updatePageNumbers(pagination) {
+        const pageNumbersContainer = document.getElementById('pageNumbers');
+        pageNumbersContainer.innerHTML = '';
+
+        const currentPage = pagination.currentPage;
+        const totalPages = pagination.totalPages;
+        
+        // Calculate which page numbers to show
+        let startPage = Math.max(1, currentPage - 2);
+        let endPage = Math.min(totalPages, currentPage + 2);
+
+        // Adjust if we're near the beginning or end
+        if (currentPage <= 3) {
+            endPage = Math.min(5, totalPages);
+        }
+        if (currentPage >= totalPages - 2) {
+            startPage = Math.max(1, totalPages - 4);
+        }
+
+        // Add ellipsis at the start if needed
+        if (startPage > 1) {
+            this.addPageNumber(pageNumbersContainer, 1, currentPage);
+            if (startPage > 2) {
+                const ellipsis = document.createElement('span');
+                ellipsis.className = 'px-2 py-1 text-sm text-gray-500';
+                ellipsis.textContent = '...';
+                pageNumbersContainer.appendChild(ellipsis);
+            }
+        }
+
+        // Add page numbers
+        for (let i = startPage; i <= endPage; i++) {
+            this.addPageNumber(pageNumbersContainer, i, currentPage);
+        }
+
+        // Add ellipsis at the end if needed
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) {
+                const ellipsis = document.createElement('span');
+                ellipsis.className = 'px-2 py-1 text-sm text-gray-500';
+                ellipsis.textContent = '...';
+                pageNumbersContainer.appendChild(ellipsis);
+            }
+            this.addPageNumber(pageNumbersContainer, totalPages, currentPage);
+        }
+    }
+
+    addPageNumber(container, pageNumber, currentPage) {
+        const button = document.createElement('button');
+        button.className = `px-3 py-1 text-sm rounded ${
+            pageNumber === currentPage 
+                ? 'bg-blue-500 text-white' 
+                : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+        }`;
+        button.textContent = pageNumber;
+        button.addEventListener('click', () => {
+            this.currentPage = pageNumber;
+            this.loadRecentActivity();
+        });
+        container.appendChild(button);
+    }
+
 
     updateClicksByHourChart(data) {
         const ctx = document.getElementById('clicksByHourChart').getContext('2d');
@@ -468,7 +624,130 @@ class ClickAnalyticsDashboard {
         });
     }
 
-    // In dashboard.js, update the updateRecentActivityTable function
+   async checkClickerStatus() {
+    try {
+        const response = await fetch('/clicker-status');
+        const data = await response.json();
+        this.updateClickerStatus(data.isClickerRunning);
+    } catch (error) {
+        console.error('Error checking clicker status:', error);
+    }
+}
+
+updateClickerStatus(isRunning) {
+    const statusIndicator = document.getElementById('statusIndicator');
+    const statusText = document.getElementById('statusText');
+    const startBtn = document.getElementById('startClickerBtn');
+    const stopBtn = document.getElementById('stopClickerBtn');
+
+    if (isRunning) {
+        statusIndicator.className = 'w-3 h-3 rounded-full bg-green-500 mr-2';
+        statusText.textContent = 'Running';
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+    } else {
+        statusIndicator.className = 'w-3 h-3 rounded-full bg-red-500 mr-2';
+        statusText.textContent = 'Stopped';
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        document.getElementById('sessionInfo').classList.add('hidden');
+    }
+}
+
+async startClicker() {
+    const searchKeyword = document.getElementById('searchKeyword').value.trim();
+    const searchEngine = document.getElementById('searchEngineSelect').value;
+    const targetDomain = document.getElementById('targetDomain').value.trim();
+
+    // Validation
+    if (!searchKeyword) {
+        alert('Please enter a search keyword');
+        return;
+    }
+
+    if (!searchEngine) {
+        alert('Please select a search engine');
+        return;
+    }
+
+    try {
+        const params = new URLSearchParams({
+            searchTerm: searchKeyword,
+            searchEngine: searchEngine,
+            ...(targetDomain && { target: targetDomain })
+        });
+
+        const response = await fetch(`/start-clicker?${params}`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            this.updateClickerStatus(true);
+            
+            // Show session info
+            document.getElementById('currentSessionId').textContent = data.sessionId;
+            document.getElementById('sessionInfo').classList.remove('hidden');
+            
+            // Show success message
+            this.showMessage('Clicker started successfully!', 'success');
+            
+            // Refresh data
+            this.loadAnalytics();
+            this.loadRecentActivity();
+            this.loadSessions();
+        } else {
+            this.showMessage(data.message || 'Failed to start clicker', 'error');
+        }
+    } catch (error) {
+        console.error('Error starting clicker:', error);
+        this.showMessage('Error starting clicker', 'error');
+    }
+}
+
+async stopClicker() {
+    try {
+        const response = await fetch('/stop-clicker', {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            this.updateClickerStatus(false);
+            this.showMessage('Clicker stopped successfully!', 'success');
+            
+            // Refresh data
+            this.loadAnalytics();
+            this.loadRecentActivity();
+            this.loadSessions();
+        } else {
+            this.showMessage('Failed to stop clicker', 'error');
+        }
+    } catch (error) {
+        console.error('Error stopping clicker:', error);
+        this.showMessage('Error stopping clicker', 'error');
+    }
+}
+
+showMessage(message, type) {
+    // Create a temporary message element
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `fixed top-4 right-4 px-4 py-2 rounded-md text-white z-50 ${
+        type === 'success' ? 'bg-green-500' : 'bg-red-500'
+    }`;
+    messageDiv.textContent = message;
+    
+    document.body.appendChild(messageDiv);
+    
+    // Remove message after 3 seconds
+    setTimeout(() => {
+        if (document.body.contains(messageDiv)) {
+            document.body.removeChild(messageDiv);
+        }
+    }, 3000);
+} 
 }
 
 // Initialize dashboard when DOM is loaded

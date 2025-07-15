@@ -190,17 +190,35 @@ const getSessions = async (req, res) => {
 const getRecentActivity = async (req, res) => {
     try {
         const { sessionId } = req.query;
-        const limit = parseInt(req.query.limit) || 50;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 25; // Default to 25 items per page
+        const skip = (page - 1) * limit;
         
         const filter = {};
         if (sessionId) filter.session_id = sessionId;
         
+        // Get total count for pagination info
+        const totalCount = await Click.countDocuments(filter);
+        const totalPages = Math.ceil(totalCount / limit);
+        
+        // Get paginated results
         const recentClicks = await Click.find(filter)
             .sort({ timestamp: -1 })
+            .skip(skip)
             .limit(limit)
             .lean();
 
-        res.json(recentClicks);
+        res.json({
+            data: recentClicks,
+            pagination: {
+                currentPage: page,
+                totalPages: totalPages,
+                totalCount: totalCount,
+                hasNextPage: page < totalPages,
+                hasPreviousPage: page > 1,
+                itemsPerPage: limit
+            }
+        });
     } catch (error) {
         console.error('Recent activity error:', error);
         res.status(500).json({ error: 'Failed to fetch recent activity' });
